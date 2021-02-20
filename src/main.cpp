@@ -5,7 +5,11 @@
 #include <esp_bt.h>
 #include "driver/adc.h"
 
+#include "string_helper.h"
+
 #define BUTTON_PIN_BITMASK 0x10
+#define uS_TO_S_FACTOR 1000000  /* Conversion factor for micro seconds to seconds */
+#define TIME_TO_SLEEP  3600       /* Time ESP32 will go to sleep (in seconds) */
 
 WiFiClient wifi_client;
 PubSubClient mqtt_client(wifi_client);
@@ -13,7 +17,9 @@ IPAddress ip(192, 168, 1, 5);
 
 unsigned long lastMsg = 0;
 unsigned long first = millis();
-String mac, dis_json, dis_topic, state_topic;
+String mac_end_str, state_topic, batt_topic, batt_level;
+
+std::pair<String, String> sensor_discovery_strings, battery_discovery_strings;
 
 volatile unsigned long last_changed = 0;
 volatile boolean needs_update = false;
@@ -30,11 +36,21 @@ void connectToNetwork()
   Serial.println("Connected to network");
 }
 
-void set_states()
+void set_batt_level()
 {
-  dis_json = "{\"name\": \"door_sensor_" + mac + "\", \"device_class\": \"door\", \"state_topic\": \"door_" + mac + "/state\", \"unique_id\": \"door_sensor_" + mac + "\"}";
-  dis_topic = "homeassistant/binary_sensor/door_" + mac + "/config";
-  state_topic = "door_" + mac + "/state";
+  double total = 0;
+  int percentage = 0;
+
+  for (int i = 0; i < 10; i++)
+  {
+    total += analogRead(A0);
+  }
+  total /= 10.0;
+  // equal divider - voltage range 1.7v - 2v (~3.3v to 4.2v)
+  // analog range 0 -> 4096 for 0-3.3v
+  // analog range relevent 1658 to 1950 rage(290)
+  percentage = max(0.0, min(100.0, 100 * (total - 1658) / 290.0));
+  batt_level = String(percentage);
 }
 
 void mqtt_callback(char *topic, byte *payload, unsigned int length)
@@ -63,7 +79,7 @@ void set_mac_string()
     sprintf(buf, "%02X", mact[i]);
     s += buf;
   }
-  mac = s;
+  mac_end_str = s;
 }
 
 void door_changed()
@@ -82,9 +98,9 @@ void start_sleep()
   adc_power_off();
   esp_wifi_stop();
   esp_bt_controller_disable();
-  Serial.flush();
-  delay(1000);
-  // Go to sleep! Zzzz
+
+  // Go to sleep! But wakeup for battery input
+  esp_sleep_enable_timer_wakeup(TIME_TO_SLEEP * uS_TO_S_FACTOR);
   esp_deep_sleep_start();
 }
 
@@ -127,13 +143,17 @@ void print_wakeup_reason()
 void setup()
 {
   Serial.begin(115200);
+
+  set_mac_string();
+  set_batt_level();
   connectToNetwork();
+
   mqtt_client.setServer(ip, 1883);
   mqtt_client.setCallback(mqtt_callback);
-  set_mac_string();
-  set_states();
-  Serial.println(mac);
-
+  
+  sensor_discovery_strings = get_sensor_discovery_jsons(mac_end_str);
+  battery_discovery_strings = get_battery_discovery_jsons(mac_end_str);
+  
   //Print the wakeup reason for ESP32
   print_wakeup_reason();
 
@@ -145,7 +165,11 @@ void setup()
     Serial.print("MQTT OK in millis ");
     Serial.println(millis() - first);
     mqtt_client.subscribe("inTest");
-    mqtt_client.publish(dis_topic.c_str(), dis_json.c_str());
+    mqtt_client.publish(battery_discovery_strings.first.c_str(), battery_discovery_strings.second.c_str());
+    mqtt_client.publish(sensor_discovery_strings.first.c_str(), sensor_discovery_strings.second.c_str());
+    state_topic = "door_" + mac_end_str + "/state";
+    batt_topic = "door_" + mac_end_str + "/batt";
+
     if (digitalRead(4) == HIGH)
     {
       mqtt_client.publish(state_topic.c_str(), "OFF");
@@ -154,6 +178,8 @@ void setup()
     {
       mqtt_client.publish(state_topic.c_str(), "ON");
     }
+
+    mqtt_client.publish(batt_topic.c_str(), batt_level.c_str());
   }
   attachInterrupt(digitalPinToInterrupt(4), door_changed, CHANGE);
 }
@@ -194,5 +220,5 @@ void loop()
       esp_sleep_enable_ext1_wakeup(BUTTON_PIN_BITMASK, ESP_EXT1_WAKEUP_ANY_HIGH);
     }
     start_sleep();
-  }
+  }    
 }
