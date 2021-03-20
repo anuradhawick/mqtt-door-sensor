@@ -8,12 +8,13 @@
 #include "string_helper.h"
 
 #define BUTTON_PIN_BITMASK 0x10
-#define uS_TO_S_FACTOR 1000000  /* Conversion factor for micro seconds to seconds */
-#define TIME_TO_SLEEP  3600       /* Time ESP32 will go to sleep (in seconds) */
+#define uS_TO_S_FACTOR 1000000ULL  /* Conversion factor for micro seconds to seconds */
+#define TIME_TO_SLEEP  3600ULL       /* Time ESP32 will go to sleep (in seconds) */
 
 WiFiClient wifi_client;
 PubSubClient mqtt_client(wifi_client);
 IPAddress ip(192, 168, 1, 5);
+
 
 unsigned long lastMsg = 0;
 unsigned long first = millis();
@@ -46,9 +47,10 @@ void set_batt_level()
     total += analogRead(A0);
   }
   total /= 10.0;
+  Serial.println(total);
   // equal divider - voltage range 1.7v - 2v (~3.3v to 4.2v)
   // analog range 0 -> 4096 for 0-3.3v
-  // analog range relevent 1658 to 1950 rage(290)
+  // analog range relevent 3.4/2 -> 4.1/2 reading range 1658 to 1950 rage(290)
   percentage = max(0.0, min(100.0, 100 * (total - 1658) / 290.0));
   batt_level = String(percentage);
 }
@@ -95,12 +97,14 @@ void start_sleep()
   WiFi.mode(WIFI_OFF);
   btStop();
 
-  adc_power_off();
+  adc_power_release();
   esp_wifi_stop();
   esp_bt_controller_disable();
 
   // Go to sleep! But wakeup for battery input
   esp_sleep_enable_timer_wakeup(TIME_TO_SLEEP * uS_TO_S_FACTOR);
+  Serial.print("Sleeping for ");
+  Serial.println(TIME_TO_SLEEP * uS_TO_S_FACTOR);
   esp_deep_sleep_start();
 }
 
