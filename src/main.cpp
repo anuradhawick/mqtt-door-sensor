@@ -42,10 +42,15 @@ void set_batt_level()
   double total = 0;
   int percentage = 0;
 
+  // adc_power_acquire();
+
   for (int i = 0; i < 10; i++)
   {
     total += analogRead(A0);
   }
+
+  // adc_power_release();
+
   total /= 10.0;
   Serial.println(total);
   // equal divider - voltage range 1.7v - 2v (~3.3v to 4.2v)
@@ -97,9 +102,10 @@ void start_sleep()
   WiFi.mode(WIFI_OFF);
   btStop();
 
-  adc_power_release();
   esp_wifi_stop();
   esp_bt_controller_disable();
+
+  adc_power_off();
 
   // Go to sleep! But wakeup for battery input
   esp_sleep_enable_timer_wakeup(TIME_TO_SLEEP * uS_TO_S_FACTOR);
